@@ -1,0 +1,197 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -----------------------------------------------------------------------------
+// Core Multitenancy & Subscription
+// -----------------------------------------------------------------------------
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isActive  Boolean  @default(true)
+
+  // Tax / Compliance
+  ntn         String?
+  strn        String?
+  taxSettings Json?
+
+  // Relationships
+  branches      Branch[]
+  users         User[]
+  roles         Role[]
+  subscriptions Subscription[]
+  products      Product[]
+  orders        Order[]
+  customers     Customer[]
+  licenses      License[]
+  auditLogs     AuditLog[]
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users  User[]
+  orders Order[]
+}
+
+model Subscription {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan      String // e.g., 'MONTHLY', 'YEARLY', 'LIFETIME'
+  status    String // e.g., 'ACTIVE', 'EXPIRED', 'PENDING'
+  expiresAt DateTime?
+  features  Json // JSON representing enabled features
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model License {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  licenseKey  String    @unique
+  deviceLimit Int       @default(1)
+  expiresAt   DateTime?
+  status      String // e.g., 'ACTIVE', 'REVOKED'
+  createdAt   DateTime  @default(now())
+}
+
+// -----------------------------------------------------------------------------
+// Identity & Authorization
+// -----------------------------------------------------------------------------
+
+model User {
+  id            String     @id @default(uuid())
+  tenantId      String?
+  tenant        Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId      String?
+  branch        Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  roleId        String?
+  role          Role?      @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  email         String     @unique
+  passwordHash  String
+  name          String
+  isMasterAdmin Boolean    @default(false)
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  auditLogs     AuditLog[]
+}
+
+model Role {
+  id          String  @id @default(uuid())
+  tenantId    String?
+  tenant      Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  permissions Json // Granular permissions array e.g., ["orders.create", "reports.view"]
+  users       User[]
+}
+
+// -----------------------------------------------------------------------------
+// CRM
+// -----------------------------------------------------------------------------
+
+model Customer {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  email     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+}
+
+// -----------------------------------------------------------------------------
+// POS & Ordering
+// -----------------------------------------------------------------------------
+
+model Product {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  price       Float
+  taxCategory String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems OrderItem[]
+}
+
+model Order {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId   String
+  branch     Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  totalAmount    Float
+  taxAmount      Float  @default(0)
+  discountAmount Float  @default(0)
+  status         String // e.g., 'OPEN', 'COMPLETED', 'VOIDED', 'REFUNDED'
+  paymentStatus  String // e.g., 'UNPAID', 'PAID'
+
+  // Offline Sync support (Event tracking)
+  localId  String? // UUID generated locally on device
+  syncedAt DateTime?
+
+  // FBR fields
+  fbrInvoiceNumber String?
+  fbrStatus        String? // 'PENDING_SUBMISSION', 'ACCEPTED', 'REJECTED'
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items OrderItem[]
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Int
+  price     Float
+  subtotal  Float
+}
+
+// -----------------------------------------------------------------------------
+// Auditing & Security
+// -----------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
